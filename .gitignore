@@ -1,0 +1,15 @@
+# Ignorar dependencias pesadas
+node_modules/
+*/node_modules/
+
+# Ignorar archivos de sistema y entorno
+.DS_Store
+.env
+*/.env
+
+# Ignorar archivos de construcción
+dist/
+*/dist/
+
+# Ignorar carpeta de configuración del IDE
+.idea/

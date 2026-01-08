@@ -1,0 +1,55 @@
+// server/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums para categorizar transacciones y estados
+enum TransactionType {
+  FAUCET_CLAIM
+  BET_SLOT
+  WIN_SLOT
+}
+
+model User {
+  id             String        @id @default(uuid())
+  email          String        @unique
+  password       String        // Hash (Argon2 o Bcrypt)
+  username       String        @unique
+  balance        Int           @default(1000) // Usamos Enteros para evitar errores de coma flotante
+  lastFaucetClaim DateTime?    // Control de cooldown de 24h
+  createdAt      DateTime      @default(now())
+
+  transactions   Transaction[]
+  gameRounds     GameRound[]
+
+  @@index([email])
+}
+
+model GameRound {
+  id        String   @id @default(uuid())
+  userId    String
+  gameType  String   @default("SLOTS_3_REEL") // Para futuro: "ROULETTE", "BLACKJACK"
+  betAmount Int
+  payout    Int      @default(0)
+  result    Json     // Guardamos el resultado exacto (ej: ["🍀", "🍀", "🍀"])
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Transaction {
+  id          String          @id @default(uuid())
+  userId      String
+  amount      Int             // Positivo (ganancia/faucet) o Negativo (apuesta)
+  type        TransactionType
+  referenceId String?         // ID del GameRound relacionado (opcional)
+  createdAt   DateTime        @default(now())
+
+  user        User            @relation(fields: [userId], references: [id])
+}
