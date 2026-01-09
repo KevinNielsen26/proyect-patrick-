@@ -4,7 +4,9 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Mantén tu configuración de generator y datasource existente
+datasource db {
+  provider = "postgresql"
+}
 
 enum TransactionType {
   FAUCET_CLAIM
