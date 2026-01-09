@@ -4,12 +4,10 @@ generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
 
-// Enums para categorizar transacciones y estados
+
+// Mantén tu configuración de generator y datasource existente
+
 enum TransactionType {
   FAUCET_CLAIM
   BET_SLOT
@@ -17,16 +15,17 @@ enum TransactionType {
 }
 
 model User {
-  id             String        @id @default(uuid())
-  email          String        @unique
-  password       String        // Hash (Argon2 o Bcrypt)
-  username       String        @unique
-  balance        Int           @default(1000) // Usamos Enteros para evitar errores de coma flotante
-  lastFaucetClaim DateTime?    // Control de cooldown de 24h
-  createdAt      DateTime      @default(now())
+  id              String        @id @default(uuid())
+  email           String        @unique
+  password        String        // Recuerda hashear con bcrypt/argon2
+  username        String        @unique
+  balance         Int           @default(1000) // Manejo en centavos o unidad mínima
+  lastFaucetClaim DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  transactions   Transaction[]
-  gameRounds     GameRound[]
+  transactions    Transaction[]
+  gameRounds      GameRound[]
 
   @@index([email])
 }
@@ -34,22 +33,30 @@ model User {
 model GameRound {
   id        String   @id @default(uuid())
   userId    String
-  gameType  String   @default("SLOTS_3_REEL") // Para futuro: "ROULETTE", "BLACKJACK"
+  gameType  String   @default("SLOTS_3_REEL")
   betAmount Int
   payout    Int      @default(0)
-  result    Json     // Guardamos el resultado exacto (ej: ["🍀", "🍀", "🍀"])
+  result    Json     // Ej: { reels: ["🍀", "💎", "🍀"], isWin: false }
+  clientSeed String? // Opcional: para provably fair en el futuro
+  serverSeed String? // Opcional: para provably fair en el futuro
   createdAt DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id])
+
+  // Relación inversa para fácil acceso
+  transactions Transaction[]
 }
 
 model Transaction {
   id          String          @id @default(uuid())
   userId      String
-  amount      Int             // Positivo (ganancia/faucet) o Negativo (apuesta)
+  amount      Int             // Puede ser negativo (apuesta) o positivo (ganancia)
   type        TransactionType
-  referenceId String?         // ID del GameRound relacionado (opcional)
+  referenceId String?         // ID del GameRound o referencia externa
   createdAt   DateTime        @default(now())
 
-  user        User            @relation(fields: [userId], references: [id])
+  user        User       @relation(fields: [userId], references: [id])
+  gameRound   GameRound? @relation(fields: [referenceId], references: [id])
+
+  @@index([userId])
 }
