@@ -49,7 +49,7 @@ io.on('connection', (socket) => {
 
     // NOTA: Aquí deberías agregar un middleware de autenticación más adelante
     // Por ahora, simulamos un userId para que el slotHandler funcione
-    socket.data.userId = "id-de-prueba-usuario";
+    socket.data.userId = "e5a6dccc-df35-43a8-ab87-7976394bec4f";
 
     // Inyectamos la lógica de la máquina tragamonedas que ya creaste
     slotHandler(io, socket);
