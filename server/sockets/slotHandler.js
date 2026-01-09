@@ -1,6 +1,6 @@
-const { z } = require('zod');
-const { prisma } = require('../lib/prisma'); // Tu instancia de Prisma Client
-const { generateSpinResult, calculatePayout } = require('../services/slotService');
+const { z } = import('zod');
+const { prisma } = import('../lib/prisma'); // Tu instancia de Prisma Client
+const { generateSpinResult, calculatePayout } = import ('../services/slotService');
 
 // Validación de entrada con Zod
 const spinSchema = z.object({
