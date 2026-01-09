@@ -4,8 +4,6 @@ generator client {
   provider = "prisma-client-js"
 }
 
-
-
 // Mantén tu configuración de generator y datasource existente
 
 enum TransactionType {
