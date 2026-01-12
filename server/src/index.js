@@ -20,8 +20,13 @@ const app = express();
 const httpServer = createServer(app);
 
 // 2. Inicializar Prisma
+// Usamos 'datasources' para inyectar la URL explícitamente al arrancar
 const prisma = new PrismaClient({
-    datasourceUrl: process.env.DATABASE_URL,
+    datasources: {
+        db: {
+            url: process.env.DATABASE_URL,
+        },
+    },
 });
 
 // 3. Configurar Socket.io
