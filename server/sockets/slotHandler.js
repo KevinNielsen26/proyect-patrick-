@@ -1,40 +1,64 @@
-const { z } = import('zod');
-const { prisma } = import('../lib/prisma'); // Tu instancia de Prisma Client
-const { generateSpinResult, calculatePayout } = import ('../services/slotService');
+// server/sockets/slotHandler.js
+import { z } from 'zod';
+// Eliminamos las importaciones complejas de servicios por ahora para simplificar y que arranque
+// import {generateSpinResult, calculatePayout } from '../services/slotService.js';
 
-// Validación de entrada con Zod
+// Lógica simple temporal para que no dependas de archivos externos que quizás no tengas bien configurados
+const generateSpinResult = () => {
+    const symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "🍀"];
+    return [
+        symbols[Math.floor(Math.random() * symbols.length)],
+        symbols[Math.floor(Math.random() * symbols.length)],
+        symbols[Math.floor(Math.random() * symbols.length)]
+    ];
+};
+
+const calculatePayout = (bet, reels) => {
+    // Lógica simplificada: 3 iguales ganan x10
+    if (reels[0] === reels[1] && reels[1] === reels[2]) return bet * 10;
+    // 2 iguales ganan x2
+    if (reels[0] === reels[1] || reels[1] === reels[2] || reels[0] === reels[2]) return bet * 2;
+    return 0;
+};
+
+// Validación Zod
 const spinSchema = z.object({
     betAmount: z.number().int().positive().min(10).max(1000)
 });
 
-module.exports = (io, socket) => {
+// Exportación nombrada moderna (ES Modules)
+// Recibimos 'prisma' como 3er argumento desde index.js
+export const slotHandler = (io, socket, prisma) => {
+
     const onSpin = async (data) => {
         try {
-            // 1. Validar inputs
-            const { betAmount } = spinSchema.parse(data);
-            const userId = socket.data.userId; // Asumimos que el middleware de auth ya puso el ID aquí
+            console.log("🎰 Spin solicitado:", data);
 
-            // 2. Transacción Atómica en DB (CRÍTICO)
+            // 1. Validar inputs
+            const parseResult = spinSchema.safeParse(data);
+            if (!parseResult.success) {
+                throw new Error("Apuesta inválida: " + parseResult.error.message);
+            }
+            const { betAmount } = parseResult.data;
+            const userId = socket.data.userId;
+
+            // 2. Transacción
             const result = await prisma.$transaction(async (tx) => {
-                // A. Buscar usuario y bloquear fila (opcionalmente) o verificar saldo
                 const user = await tx.user.findUnique({ where: { id: userId } });
 
                 if (!user || user.balance < betAmount) {
                     throw new Error("Saldo insuficiente");
                 }
 
-                // B. Calcular juego (Server Authority)
                 const reels = generateSpinResult();
                 const payout = calculatePayout(betAmount, reels);
                 const netChange = payout - betAmount;
 
-                // C. Actualizar Saldo
                 const updatedUser = await tx.user.update({
                     where: { id: userId },
                     data: { balance: { increment: netChange } }
                 });
 
-                // D. Registrar Ronda
                 const round = await tx.gameRound.create({
                     data: {
                         userId,
@@ -45,7 +69,7 @@ module.exports = (io, socket) => {
                     }
                 });
 
-                // E. Registrar Transacciones (Gasto y Ganancia si hubo)
+                // Registrar el gasto (apuesta)
                 await tx.transaction.create({
                     data: {
                         userId,
@@ -55,6 +79,7 @@ module.exports = (io, socket) => {
                     }
                 });
 
+                // Registrar la ganancia (si hubo)
                 if (payout > 0) {
                     await tx.transaction.create({
                         data: {
@@ -69,7 +94,7 @@ module.exports = (io, socket) => {
                 return { reels, payout, balance: updatedUser.balance };
             });
 
-            // 3. Emitir resultado al cliente (Solo al jugador)
+            // 3. Emitir éxito
             socket.emit('spin_result', {
                 success: true,
                 reels: result.reels,
@@ -77,16 +102,8 @@ module.exports = (io, socket) => {
                 newBalance: result.balance
             });
 
-            // 4. (Opcional) Broadcast de victoria grande a toda la sala
-            if (result.payout >= betAmount * 10) {
-                io.emit('big_win_announcement', {
-                    username: socket.data.username,
-                    amount: result.payout
-                });
-            }
-
         } catch (error) {
-            console.error("Error en spin:", error);
+            console.error("❌ Error en spin:", error.message);
             socket.emit('spin_error', { message: error.message || "Error interno" });
         }
     };
