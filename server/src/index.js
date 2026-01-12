@@ -10,14 +10,17 @@ const { PrismaClient } = pkg;
 
 import { slotHandler } from '../sockets/slotHandler.js';
 
-// 1. Cargar variables de entorno PRIMERO
+// 1. Cargar variables de entorno
 dotenv.config();
 
-const app = express();
-const httpServer = createServer(app);
 
-// 2. Inicializar Prisma con un objeto vacío
+// 2. Inicializar Prisma pasando la URL explícitamente
 const prisma = new PrismaClient({
+    datasources: {
+        db: {
+            url: process.env.DATABASE_URL,
+        },
+    },
 });
 
 // 3. Configurar Socket.io

@@ -1,12 +1,15 @@
 // server/prisma/schema.prisma
 
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
+  engineType = "library" // <--- ESTO SOLUCIONA EL ERROR DE "ENGINE TYPE CLIENT"
 }
 
 datasource db {
   provider = "postgresql"
 }
+
+
 
 enum TransactionType {
   FAUCET_CLAIM
