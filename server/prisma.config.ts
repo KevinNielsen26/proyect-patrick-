@@ -1,4 +1,4 @@
-// server/prisma.config.js
+// server/prisma.config.ts
 import { defineConfig } from "prisma/config";
 import "dotenv/config";
 
