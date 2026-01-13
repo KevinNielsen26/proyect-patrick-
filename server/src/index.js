@@ -4,26 +4,24 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import pg from 'pg'; // <--- El driver nativo
 
-import pkg from '@prisma/client';
-const { PrismaClient } = pkg;
-
+const { Pool } = pg;
 import { slotHandler } from '../sockets/slotHandler.js';
 
-// 1. Cargar variables de entorno
+// 1. Configuración
 dotenv.config();
+const app = express();
+const httpServer = createServer(app);
 
-
-// 2. Inicializar Prisma pasando la URL explícitamente
-const prisma = new PrismaClient({
-    datasources: {
-        db: {
-            url: process.env.DATABASE_URL,
-        },
-    },
+// 2. Conexión a Base de Datos (Pool)
+// Esto maneja múltiples conexiones automáticamente
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    // ssl: { rejectUnauthorized: false } // Descomenta si usas DB en la nube (Render/Neon)
 });
 
-// 3. Configurar Socket.io
+// 3. Socket.io
 const io = new Server(httpServer, {
     cors: {
         origin: ["http://localhost:5173", "http://localhost:5174"],
@@ -35,49 +33,44 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json());
 
-// 5. Test DB
-async function testDbConnection() {
-    try {
-        await prisma.$connect();
-        console.log('✅ Conexión exitosa a la base de datos PostgreSQL');
-    } catch (error) {
-        console.error('❌ Error al conectar a la base de datos:', error);
-        process.exit(1);
-    }
-}
-testDbConnection();
+// 5. Verificar Conexión
+pool.connect()
+    .then(client => {
+        console.log('✅ PostgreSQL Conectado exitosamente');
+        client.release(); // Importante: liberar el cliente
+    })
+    .catch(err => {
+        console.error('❌ Error de conexión a DB:', err.message);
+    });
 
-// 6. Configuración de Sockets
+// 6. Sockets
 io.on('connection', (socket) => {
     console.log('👤 Usuario conectado:', socket.id);
 
-    socket.data.userId = "e5a6dccc-df35-43a8-ab87-7976394bec4f";
-
-    slotHandler(io, socket, prisma);
+    // IMPORTANTE: Ahora pasamos "pool" en vez de "prisma"
+    slotHandler(io, socket, pool);
 
     socket.on('disconnect', () => {
         console.log('🚫 Usuario desconectado');
     });
 });
 
-// 7. Ruta de estado
-app.get('/status', (req, res) => {
-    res.json({
-        status: 'Patrick Casino Online',
-        database: 'Connected',
-        version: '1.0.0-MVP'
-    });
+// 7. Rutas
+app.get('/status', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT NOW()');
+        res.json({
+            status: 'Patrick Casino Online',
+            database: 'Connected',
+            time: result.rows[0].now
+        });
+    } catch (e) {
+        res.status(500).json({ error: 'DB Error' });
+    }
 });
 
-// 8. Graceful shutdown
-process.on('SIGINT', async () => {
-    console.log('\n🛑 Cerrando servidor...');
-    await prisma.$disconnect();
-    process.exit(0);
-});
-
-// 9. Iniciar
+// 8. Iniciar
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
-    console.log(`🍀 Patrick Casino Server corriendo en http://localhost:${PORT}`);
+    console.log(`🍀 Server corriendo en http://localhost:${PORT}`);
 });

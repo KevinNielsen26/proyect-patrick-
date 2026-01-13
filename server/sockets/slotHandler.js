@@ -1,9 +1,7 @@
 // server/sockets/slotHandler.js
 import { z } from 'zod';
-// Eliminamos las importaciones complejas de servicios por ahora para simplificar y que arranque
-// import {generateSpinResult, calculatePayout } from '../services/slotService.js';
 
-// Lógica simple temporal para que no dependas de archivos externos que quizás no tengas bien configurados
+// --- Lógica del Juego (Mantengo la simple por ahora para asegurar que funcione) ---
 const generateSpinResult = () => {
     const symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "🍀"];
     return [
@@ -14,23 +12,26 @@ const generateSpinResult = () => {
 };
 
 const calculatePayout = (bet, reels) => {
-    // Lógica simplificada: 3 iguales ganan x10
+    // 3 iguales = x10
     if (reels[0] === reels[1] && reels[1] === reels[2]) return bet * 10;
-    // 2 iguales ganan x2
+    // 2 iguales = x2
     if (reels[0] === reels[1] || reels[1] === reels[2] || reels[0] === reels[2]) return bet * 2;
     return 0;
 };
 
-// Validación Zod
+// --- Validación ---
 const spinSchema = z.object({
     betAmount: z.number().int().positive().min(10).max(1000)
 });
 
-// Exportación nombrada moderna (ES Modules)
-// Recibimos 'prisma' como 3er argumento desde index.js
-export const slotHandler = (io, socket, prisma) => {
+// --- Handler Principal ---
+// NOTA: Ahora recibimos 'pool' en lugar de 'prisma'
+export const slotHandler = (io, socket, pool) => {
 
     const onSpin = async (data) => {
+        // Necesitamos un cliente específico del pool para manejar la transacción
+        const client = await pool.connect();
+
         try {
             console.log("🎰 Spin solicitado:", data);
 
@@ -42,69 +43,80 @@ export const slotHandler = (io, socket, prisma) => {
             const { betAmount } = parseResult.data;
             const userId = socket.data.userId;
 
-            // 2. Transacción
-            const result = await prisma.$transaction(async (tx) => {
-                const user = await tx.user.findUnique({ where: { id: userId } });
+            // 2. INICIAR TRANSACCIÓN SQL
+            await client.query('BEGIN');
 
-                if (!user || user.balance < betAmount) {
-                    throw new Error("Saldo insuficiente");
-                }
+            // 2.1 Verificar Usuario y Saldo (Bloqueamos la fila con FOR UPDATE para evitar race conditions)
+            const userRes = await client.query(
+                'SELECT balance FROM "User" WHERE id = $1 FOR UPDATE',
+                [userId]
+            );
 
-                const reels = generateSpinResult();
-                const payout = calculatePayout(betAmount, reels);
-                const netChange = payout - betAmount;
+            if (userRes.rows.length === 0) throw new Error("Usuario no encontrado");
 
-                const updatedUser = await tx.user.update({
-                    where: { id: userId },
-                    data: { balance: { increment: netChange } }
-                });
+            const currentBalance = userRes.rows[0].balance;
 
-                const round = await tx.gameRound.create({
-                    data: {
-                        userId,
-                        betAmount,
-                        payout,
-                        result: reels,
-                        gameType: 'SLOTS_3_REEL'
-                    }
-                });
+            if (currentBalance < betAmount) {
+                throw new Error("Saldo insuficiente");
+            }
 
-                // Registrar el gasto (apuesta)
-                await tx.transaction.create({
-                    data: {
-                        userId,
-                        amount: -betAmount,
-                        type: 'BET_SLOT',
-                        referenceId: round.id
-                    }
-                });
+            // 2.2 Calcular Resultado
+            const reels = generateSpinResult();
+            const payout = calculatePayout(betAmount, reels);
+            const netChange = payout - betAmount;
+            const newBalance = currentBalance + netChange;
 
-                // Registrar la ganancia (si hubo)
-                if (payout > 0) {
-                    await tx.transaction.create({
-                        data: {
-                            userId,
-                            amount: payout,
-                            type: 'WIN_SLOT',
-                            referenceId: round.id
-                        }
-                    });
-                }
+            // 2.3 Actualizar saldo del usuario
+            await client.query(
+                'UPDATE "User" SET balance = $1 WHERE id = $2',
+                [newBalance, userId]
+            );
 
-                return { reels, payout, balance: updatedUser.balance };
-            });
+            // 2.4 Guardar ronda de juego (GameRound)
+            // Nota: JSON.stringify(reels) es necesario para guardar el array en columna JSONB
+            const roundRes = await client.query(
+                `INSERT INTO "GameRound" (userId, gameType, betAmount, payout, result)
+                 VALUES ($1, $2, $3, $4, $5)
+                 RETURNING id`,
+                [userId, 'SLOTS_3_REEL', betAmount, payout, JSON.stringify(reels)]
+            );
+            const roundId = roundRes.rows[0].id;
 
-            // 3. Emitir éxito
+            // 2.5 Registrar transacción (Apuesta - Gasto)
+            await client.query(
+                `INSERT INTO "Transaction" (userId, amount, type, referenceId)
+                 VALUES ($1, $2, $3, $4)`,
+                [userId, -betAmount, 'BET_SLOT', roundId]
+            );
+
+            // 2.6 Registrar transacción (Ganancia - Ingreso) si corresponde
+            if (payout > 0) {
+                await client.query(
+                    `INSERT INTO "Transaction" (userId, amount, type, referenceId)
+                     VALUES ($1, $2, $3, $4)`,
+                    [userId, payout, 'WIN_SLOT', roundId]
+                );
+            }
+
+            // 3. CONFIRMAR TRANSACCIÓN
+            await client.query('COMMIT');
+
+            // 4. Emitir éxito al cliente
             socket.emit('spin_result', {
                 success: true,
-                reels: result.reels,
-                payout: result.payout,
-                newBalance: result.balance
+                reels: reels,
+                payout: payout,
+                newBalance: newBalance
             });
 
         } catch (error) {
+            // Si algo falla, deshacemos todos los cambios en la DB
+            await client.query('ROLLBACK');
             console.error("❌ Error en spin:", error.message);
             socket.emit('spin_error', { message: error.message || "Error interno" });
+        } finally {
+            // SIEMPRE liberar el cliente devuelta al pool
+            client.release();
         }
     };
 
