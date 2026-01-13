@@ -1,3 +1,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Fondo estilo mesa de casino */
+body {
+    @apply bg-green-950 text-white overflow-hidden;
+    font-family: 'Inter', system-ui, sans-serif;
+}

@@ -44,10 +44,26 @@ pool.connect()
     });
 
 // 6. Sockets
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
     console.log('👤 Usuario conectado:', socket.id);
 
-    // IMPORTANTE: Ahora pasamos "pool" en vez de "prisma"
+    // --- CORRECCIÓN: Asignar el ID de usuario (Hardcoded para el MVP) ---
+    // Sin esto, el slotHandler no sabe a quién descontarle el dinero
+    const userId = "e5a6dccc-df35-43a8-ab87-7976394bec4f";
+    socket.data.userId = userId;
+
+    // --- MEJORA: Enviar el saldo real al conectarse ---
+    try {
+        const res = await pool.query('SELECT balance FROM "User" WHERE id = $1', [userId]);
+        if (res.rows.length > 0) {
+            // Enviamos el saldo real al frontend inmediatamente
+            socket.emit('balance_update', res.rows[0].balance);
+        }
+    } catch (err) {
+        console.error('Error al obtener saldo inicial:', err);
+    }
+
+    // Pasamos el control al manejador del juego
     slotHandler(io, socket, pool);
 
     socket.on('disconnect', () => {

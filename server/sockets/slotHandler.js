@@ -1,9 +1,9 @@
 // server/sockets/slotHandler.js
 import { z } from 'zod';
 
-// --- Lógica del Juego (Mantengo la simple por ahora para asegurar que funcione) ---
+// --- Lógica del Juego ---
 const generateSpinResult = () => {
-    const symbols = ["🍒", "🍋", "🍊", "🍇", "🔔", "💎", "🍀"];
+    const symbols = [ "🍒", "🍋", "🍊", "🍇", "🔔", "💎","🍀"];
     return [
         symbols[Math.floor(Math.random() * symbols.length)],
         symbols[Math.floor(Math.random() * symbols.length)],
@@ -12,9 +12,7 @@ const generateSpinResult = () => {
 };
 
 const calculatePayout = (bet, reels) => {
-    // 3 iguales = x10
     if (reels[0] === reels[1] && reels[1] === reels[2]) return bet * 10;
-    // 2 iguales = x2
     if (reels[0] === reels[1] || reels[1] === reels[2] || reels[0] === reels[2]) return bet * 2;
     return 0;
 };
@@ -25,11 +23,9 @@ const spinSchema = z.object({
 });
 
 // --- Handler Principal ---
-// NOTA: Ahora recibimos 'pool' en lugar de 'prisma'
 export const slotHandler = (io, socket, pool) => {
 
     const onSpin = async (data) => {
-        // Necesitamos un cliente específico del pool para manejar la transacción
         const client = await pool.connect();
 
         try {
@@ -46,7 +42,7 @@ export const slotHandler = (io, socket, pool) => {
             // 2. INICIAR TRANSACCIÓN SQL
             await client.query('BEGIN');
 
-            // 2.1 Verificar Usuario y Saldo (Bloqueamos la fila con FOR UPDATE para evitar race conditions)
+            // 2.1 Verificar Usuario y Saldo
             const userRes = await client.query(
                 'SELECT balance FROM "User" WHERE id = $1 FOR UPDATE',
                 [userId]
@@ -66,42 +62,41 @@ export const slotHandler = (io, socket, pool) => {
             const netChange = payout - betAmount;
             const newBalance = currentBalance + netChange;
 
-            // 2.3 Actualizar saldo del usuario
+            // 2.3 Actualizar saldo
             await client.query(
                 'UPDATE "User" SET balance = $1 WHERE id = $2',
                 [newBalance, userId]
             );
 
-            // 2.4 Guardar ronda de juego (GameRound)
-            // Nota: JSON.stringify(reels) es necesario para guardar el array en columna JSONB
+            // 2.4 Guardar ronda (CORREGIDO: Columnas entre comillas)
             const roundRes = await client.query(
-                `INSERT INTO "GameRound" (userId, gameType, betAmount, payout, result)
+                `INSERT INTO "GameRound" ("userId", "gameType", "betAmount", "payout", "result")
                  VALUES ($1, $2, $3, $4, $5)
-                 RETURNING id`,
+                     RETURNING id`,
                 [userId, 'SLOTS_3_REEL', betAmount, payout, JSON.stringify(reels)]
             );
             const roundId = roundRes.rows[0].id;
 
-            // 2.5 Registrar transacción (Apuesta - Gasto)
+            // 2.5 Registrar Apuesta (CORREGIDO: Columnas entre comillas)
             await client.query(
-                `INSERT INTO "Transaction" (userId, amount, type, referenceId)
+                `INSERT INTO "Transaction" ("userId", "amount", "type", "referenceId")
                  VALUES ($1, $2, $3, $4)`,
                 [userId, -betAmount, 'BET_SLOT', roundId]
             );
 
-            // 2.6 Registrar transacción (Ganancia - Ingreso) si corresponde
+            // 2.6 Registrar Ganancia (CORREGIDO: Columnas entre comillas)
             if (payout > 0) {
                 await client.query(
-                    `INSERT INTO "Transaction" (userId, amount, type, referenceId)
+                    `INSERT INTO "Transaction" ("userId", "amount", "type", "referenceId")
                      VALUES ($1, $2, $3, $4)`,
                     [userId, payout, 'WIN_SLOT', roundId]
                 );
             }
 
-            // 3. CONFIRMAR TRANSACCIÓN
+            // 3. CONFIRMAR
             await client.query('COMMIT');
 
-            // 4. Emitir éxito al cliente
+            // 4. Emitir
             socket.emit('spin_result', {
                 success: true,
                 reels: reels,
@@ -110,12 +105,10 @@ export const slotHandler = (io, socket, pool) => {
             });
 
         } catch (error) {
-            // Si algo falla, deshacemos todos los cambios en la DB
             await client.query('ROLLBACK');
             console.error("❌ Error en spin:", error.message);
             socket.emit('spin_error', { message: error.message || "Error interno" });
         } finally {
-            // SIEMPRE liberar el cliente devuelta al pool
             client.release();
         }
     };
